@@ -8,6 +8,13 @@
       "when": 1743229386030,
       "tag": "0000_worthless_green_goblin",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1744940402202,
+      "tag": "0001_flashy_thena",
+      "breakpoints": true
     }
   ]
 }
