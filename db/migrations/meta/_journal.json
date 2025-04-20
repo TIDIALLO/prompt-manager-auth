@@ -15,6 +15,13 @@
       "when": 1744940402202,
       "tag": "0001_flashy_thena",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1745084276777,
+      "tag": "0002_next_wind_dancer",
+      "breakpoints": true
     }
   ]
 }
