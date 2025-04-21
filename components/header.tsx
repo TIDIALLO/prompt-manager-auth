@@ -14,6 +14,7 @@ export const Header = () => {
 
   const navItems = [
     { name: "Home", href: "/" },
+    { name: "Pricing", href: "/pricing" }, // <-- Add this line
     { name: "Prompts", href: "/prompts" },
   ];
 
