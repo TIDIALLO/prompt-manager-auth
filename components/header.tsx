@@ -1,20 +1,27 @@
 // components/header.tsx
 "use client";
 
-// Import Clerk components
-import { SignedIn, SignedOut, SignInButton, UserButton } from "@clerk/nextjs";
-import { Button } from "@/components/ui/button"; // Ensure Button is imported
-import { motion } from "framer-motion";
+import { useMembership } from "@/hooks/use-membership"; // Import the custom hook
+import { SignedIn, SignedOut, SignInButton, useAuth, UserButton } from "@clerk/nextjs";
+import { motion } from "framer-motion"; // Import motion
 import { BookMarked } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Button } from "./ui/button";
+
+// Get the subscription link from env
+const subscriptionLink = process.env.NEXT_PUBLIC_MONTHLY_SUBSCRIPTION_LINK;
 
 export const Header = () => {
   const pathname = usePathname();
+  const { isPro, loading } = useMembership(); // Call the custom hook
+  const { userId } = useAuth(); // Get userId for the checkout link
+
+  const finalSubscriptionLink = userId && subscriptionLink ? `${subscriptionLink}?client_reference_id=${userId}` : "#";
 
   const navItems = [
     { name: "Home", href: "/" },
-    { name: "Pricing", href: "/pricing" }, // <-- Add this line
+    { name: "Pricing", href: "/pricing" },
     { name: "Prompts", href: "/prompts" },
   ];
 
@@ -25,39 +32,75 @@ export const Header = () => {
           {/* Logo Section (remains the same) */}
           <motion.div /* ... */ >
             <BookMarked className="w-6 h-6 text-blue-600 dark:text-blue-400" />
-            <span className="text-lg font-semibold text-gray-900 dark:text-white">
-              Prompt Manager
-            </span>
+            <span className="text-lg font-semibold text-gray-900 dark:text-white">Prompt Manager</span>
           </motion.div>
 
           {/* Navigation & Auth Section */}
           <nav className="flex items-center gap-6">
-            {/* Render nav items - decide if they show always or only when signed in */}
-            {/* For this app, let's show them always */}
+            {/* Render nav items */}
             {navItems.map((item) => (
-              <motion.div key={item.href} /* ... */ >
-                <Link href={item.href} className={`... ${pathname === item.href ? "..." : "..."}`} >
+              <motion.div key={item.href}>
+                <Link 
+                  href={item.href} 
+                  className={`text-sm font-medium transition-colors ${
+                    pathname === item.href 
+                      ? "text-primary" 
+                      : "text-muted-foreground hover:text-primary"
+                  }`}
+                >
                   {item.name}
                 </Link>
               </motion.div>
             ))}
 
-            {/* --- Clerk Auth Components --- */}
-            {/* Content shown only when the user IS signed in */}
+            {/* --- Signed In State --- */}
             <SignedIn>
-              <UserButton /> {/* Clerk's user profile button */}
+              <div className="flex items-center gap-3"> {/* Increased gap slightly */}
+                {/* Conditionally render PRO badge or Upgrade button */}
+                {!loading && ( // Only render badge/button when loading is complete
+                  <>
+                    {isPro ? (
+                      <motion.span
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="px-2.5 py-1 text-xs font-bold bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-full shadow-md"
+                      >
+                        PRO
+                      </motion.span>
+                    ) : (
+                      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                        <Button
+                          asChild
+                          size="sm"
+                          variant="outline"
+                          className="bg-gradient-to-r from-yellow-400 to-orange-500 text-white border-none hover:opacity-90 transition-opacity px-3 py-1 h-auto"
+                        >
+                          <a
+                            href={finalSubscriptionLink}
+                            className={finalSubscriptionLink === "#" ? "pointer-events-none opacity-50" : ""}
+                          >
+                            Upgrade
+                          </a>
+                        </Button>
+                      </motion.div>
+                    )}
+                  </>
+                )}
+                 {/* Optional: Add a simple loading indicator */}
+                 {loading && (
+                    <div className="w-6 h-6 border-2 border-blue-200 border-t-blue-500 rounded-full animate-spin"></div>
+                 )}
+                {/* User Button always shown when signed in */}
+                <UserButton afterSignOutUrl="/" />
+              </div>
             </SignedIn>
 
-            {/* Content shown only when the user IS NOT signed in */}
+            {/* --- Signed Out State --- */}
             <SignedOut>
-              {/* SignInButton wraps our custom button, making it trigger the sign-in flow */}
               <SignInButton mode="modal">
-                {/* You can style this button however you like */}
                 <Button>Sign in</Button>
               </SignInButton>
             </SignedOut>
-            {/* --- End Clerk Auth Components --- */}
-
           </nav>
         </div>
       </div>

@@ -4,138 +4,158 @@
 import { db } from "@/db";
 import { prompts } from "@/db/schema/prompts-schema";
 import { devDelay } from "@/lib/dev-delay";
-// Import Drizzle operators 'and' and 'eq' (equals)
-import { and, desc, eq } from "drizzle-orm";
-// Import our auth helper
+import { eq, count } from "drizzle-orm"; // Only keep eq and count
 import { requireUserId } from "./auth-actions";
+import { getCustomerByUserIdAction } from "./customers-actions"; // Import customer action
 
-// --- GET Prompts ---
+/**
+ * GET: Retrieves all prompts for the current user.
+ */
 export async function getPrompts() {
-  try {
-    // Get user ID; throws error if not logged in
-    const userId = await requireUserId();
-    await devDelay();
+  const userId = await requireUserId(); // Ensure user is logged in
 
-    console.log(`Server Action: Fetching prompts for user ${userId}...`);
-    // Add WHERE clause to filter by user_id
+  try {
+    await devDelay(); // Simulate latency
+
+    // Fetch prompts belonging to the current user
     const userPrompts = await db
       .select()
       .from(prompts)
-      .where(eq(prompts.user_id, userId)) // Only select prompts matching the user ID
-      .orderBy(desc(prompts.created_at));
+      .where(eq(prompts.user_id, userId))
+      .orderBy(prompts.created_at);
 
-    console.log(`Server Action: Fetched ${userPrompts.length} prompts.`);
     return userPrompts;
   } catch (error) {
-    console.error("Server Action Error (getPrompts):", error);
-    // Propagate the specific "Unauthorized" error or a generic one
-    if (error instanceof Error && error.message.startsWith("Unauthorized")) {
-      throw error;
-    }
+    console.error(`Error fetching prompts for user ${userId}:`, error);
     throw new Error("Failed to fetch prompts.");
   }
 }
 
-// --- CREATE Prompt ---
+/**
+ * CREATE: Creates a new prompt.
+ * Enforces prompt limit for free users.
+ */
 export async function createPrompt({ name, description, content }: { name: string; description: string; content: string }) {
-  try {
-    // Get user ID; throws error if not logged in
-    const userId = await requireUserId();
-    await devDelay();
+  const userId = await requireUserId(); // Ensure user is logged in
 
-    console.log(`Server Action: Creating prompt for user ${userId}...`);
-    // Include user_id in the values being inserted
+  try {
+    await devDelay(); // Simulate latency
+
+    // --- Check Membership Status & Prompt Limit ---
+    console.log(`Action: Checking limits for user ${userId}`);
+    const customerResult = await getCustomerByUserIdAction(userId);
+    const isPro = customerResult[0]?.membership === "pro";
+
+    if (!isPro) {
+      // User is 'free', check their current prompt count
+      // Drizzle query to count prompts for the user
+      const userPromptsResult = await db
+        .select({ value: count() }) // Select the count
+        .from(prompts)
+        .where(eq(prompts.user_id, userId));
+
+      const promptCount = userPromptsResult[0]?.value ?? 0;
+      console.log(`Action: User ${userId} (Free) has ${promptCount} prompts.`);
+
+      // Enforce the limit (e.g., 3 prompts for free users)
+      const FREE_PLAN_LIMIT = 3;
+      if (promptCount >= FREE_PLAN_LIMIT) {
+         console.warn(`Action: User ${userId} reached free limit (${FREE_PLAN_LIMIT}).`);
+        // Throw a specific error that the frontend can potentially catch
+        throw new Error(`Free users can create up to ${FREE_PLAN_LIMIT} prompts. Please upgrade to Pro for unlimited prompts.`);
+      }
+    } else {
+       console.log(`Action: User ${userId} is Pro. No limit applied.`);
+    }
+    // --- End Limit Check ---
+
+    console.log(`Action: Creating prompt for user ${userId}...`);
     const [newPrompt] = await db
       .insert(prompts)
-      .values({
-        name,
-        description,
-        content,
-        user_id: userId, // Associate prompt with the logged-in user
-      })
+      .values({ name, description, content, user_id: userId }) // Ensure user_id is set
       .returning();
 
-    console.log("Server Action: Prompt created:", newPrompt);
+    console.log("Action: Prompt created:", newPrompt);
     return newPrompt;
+
   } catch (error) {
-    console.error("Server Action Error (createPrompt):", error);
-    if (error instanceof Error && error.message.startsWith("Unauthorized")) {
-      throw error;
-    }
+    console.error(`Error creating prompt for user ${userId}:`, error);
+     // Re-throw the original error (especially the limit error)
+     // or a generic one if it's unexpected.
+     if (error instanceof Error) {
+         throw error; // Re-throw specific error (like the limit message)
+     }
     throw new Error("Failed to create prompt.");
   }
 }
 
-// --- UPDATE Prompt ---
-export async function updatePrompt({ id, name, description, content }: { id: number; name: string; description: string; content: string }) {
-  try {
-    // Get user ID; throws error if not logged in
-    const userId = await requireUserId();
-    await devDelay();
+/**
+ * UPDATE: Updates a prompt by ID.
+ * Ensures the user can only update their own prompts.
+ */
+export async function updatePrompt(id: number, { name, description, content }: { name: string; description: string; content: string }) {
+  const userId = await requireUserId(); // Ensure user is logged in
 
-    console.log(`Server Action: Updating prompt ${id} for user ${userId}...`);
-    // Add user_id condition to the WHERE clause using 'and'
-    const [updatedPrompt] = await db
+  try {
+    await devDelay(); // Simulate latency
+
+    // Security check: Only allow updating own prompts
+    const promptToUpdate = await db
+      .select()
+      .from(prompts)
+      .where(eq(prompts.id, id))
+      .limit(1);
+
+    // Check if prompt exists and belongs to user
+    if (!promptToUpdate.length || promptToUpdate[0].user_id !== userId) {
+      throw new Error("Prompt not found or you don't have permission to update it.");
+    }
+
+    // Update the prompt
+    const updated = await db
       .update(prompts)
-      .set({ name, description, content, updated_at: new Date() })
-      .where(
-        // Ensure BOTH the prompt ID matches AND the user ID matches
-        and(eq(prompts.id, id), eq(prompts.user_id, userId))
-      )
+      .set({ name, description, content })
+      .where(eq(prompts.id, id))
       .returning();
 
-    // Check if a prompt was actually updated (it wouldn't if ID exists but belongs to another user)
-    if (!updatedPrompt) {
-      throw new Error("Prompt not found or user unauthorized to update.");
-    }
-
-    console.log("Server Action: Prompt updated:", updatedPrompt);
-    return updatedPrompt;
+    return updated[0];
   } catch (error) {
-    console.error("Server Action Error (updatePrompt):", error);
-    if (error instanceof Error && error.message.startsWith("Unauthorized")) {
-      throw error;
-    }
-    // Handle the specific "not found/unauthorized" case
-    if (error instanceof Error && error.message.includes("Prompt not found or user unauthorized")) {
-       throw error;
-    }
+    console.error(`Error updating prompt ${id}:`, error);
     throw new Error("Failed to update prompt.");
   }
 }
 
-// --- DELETE Prompt ---
+/**
+ * DELETE: Deletes a prompt by ID.
+ * Ensures the user can only delete their own prompts.
+ */
 export async function deletePrompt(id: number) {
-  try {
-    // Get user ID; throws error if not logged in
-    const userId = await requireUserId();
-    await devDelay();
+  const userId = await requireUserId(); // Ensure user is logged in
 
-    console.log(`Server Action: Deleting prompt ${id} for user ${userId}...`);
-    // Add user_id condition to the WHERE clause using 'and'
-    const [deletedPrompt] = await db
+  try {
+    await devDelay(); // Simulate latency
+
+    // Security check: Only allow deleting own prompts
+    const promptToDelete = await db
+      .select()
+      .from(prompts)
+      .where(eq(prompts.id, id))
+      .limit(1);
+
+    // Check if prompt exists and belongs to user
+    if (!promptToDelete.length || promptToDelete[0].user_id !== userId) {
+      throw new Error("Prompt not found or you don't have permission to delete it.");
+    }
+
+    // Delete the prompt
+    const deleted = await db
       .delete(prompts)
-      .where(
-        // Ensure BOTH the prompt ID matches AND the user ID matches
-        and(eq(prompts.id, id), eq(prompts.user_id, userId))
-      )
+      .where(eq(prompts.id, id))
       .returning();
 
-    // Check if a prompt was actually deleted
-    if (!deletedPrompt) {
-      throw new Error("Prompt not found or user unauthorized to delete.");
-    }
-
-    console.log("Server Action: Prompt deleted:", deletedPrompt);
-    return deletedPrompt;
+    return deleted[0];
   } catch (error) {
-    console.error("Server Action Error (deletePrompt):", error);
-     if (error instanceof Error && error.message.startsWith("Unauthorized")) {
-      throw error;
-    }
-    if (error instanceof Error && error.message.includes("Prompt not found or user unauthorized")) {
-       throw error;
-    }
+    console.error(`Error deleting prompt ${id}:`, error);
     throw new Error("Failed to delete prompt.");
   }
 }
